@@ -119,8 +119,7 @@ window.FrontendBook = window.FrontendBook || {};
             closeText: EALang.close,
 
             onSelect: function (dateText, instance) {
-                FrontendBookApi.getAvailableHours($(this).datepicker('getDate').toString('yyyy-MM-dd'));
-                FrontendBook.updateConfirmFrame();
+                FrontendBookApi.set_date_field();
             },
 
             onChangeMonthYear: function (year, month, instance) {
@@ -130,7 +129,7 @@ window.FrontendBook = window.FrontendBook || {};
             }
         });
 
-        $('#select-timezone').val(Intl.DateTimeFormat().resolvedOptions().timeZone);
+        $('#select-timezone').val(FrontendBookApi.getCustomerTimezone());
 
         // Bind the event handlers (might not be necessary every time we use this class).
         if (defaultEventHandlers) {
@@ -220,21 +219,13 @@ window.FrontendBook = window.FrontendBook || {};
 
             $('#select-provider').empty();
 
-            GlobalVariables.availableProviders.forEach(function (provider) {
-                // If the current provider is able to provide the selected service, add him to the list box.
-                var canServeService = provider.services.filter(function (providerServiceId) {
+            const provider = GlobalVariables.availableProviders.find(function(provider) { 
+                return provider.services.find(function (providerServiceId) {
                     return Number(providerServiceId) === Number(serviceId);
-                }).length > 0;
-
-                if (canServeService) {
-                    $('#select-provider').append(new Option(provider.first_name + ' ' + provider.last_name, provider.id));
-                }
+                });
             });
 
-            // Add the "Any Provider" entry.
-            if ($('#select-provider option').length >= 1 && GlobalVariables.displayAnyProvider === '1') {
-                $('#select-provider').append(new Option('- ' + EALang.any_provider + ' -', 'any-provider'));
-            }
+            $('#select-provider').val(provider.id);
 
             FrontendBookApi.getUnavailableDates($('#select-provider').val(), $(this).val(),
                 $('#select-date').datepicker('getDate').toString('yyyy-MM-dd'));
@@ -425,7 +416,12 @@ window.FrontendBook = window.FrontendBook || {};
          * @param {jQuery.Event} event
          */
         $('#book-appointment-submit').on('click', function () {
-            FrontendBookApi.registerAppointment();
+            const data = FrontendBook.updateConfirmFrame();
+            if (!validateCustomerForm()) {
+                return; // Validation failed, do not continue.
+            }
+            $('input[name="csrfToken"]').val(GlobalVariables.csrfToken);
+            FrontendBookApi.registerAppointment(data);
         });
 
         /**
@@ -438,7 +434,7 @@ window.FrontendBook = window.FrontendBook || {};
         });
 
 
-        $('#select-date').on('mousedown', '.ui-datepicker-calendar td', function (event) {
+        $('#select-date').on('mousedown keydown', '.ui-datepicker-calendar td', function (event) {
             setTimeout(function () {
                 FrontendBookApi.applyPreviousUnavailableDates(); // New jQuery UI version will replace the td elements.
             }, 300); // There is no draw event unfortunately.
@@ -452,46 +448,10 @@ window.FrontendBook = window.FrontendBook || {};
      * @return {Boolean} Returns the validation result.
      */
     function validateCustomerForm() {
-        $('#wizard-frame-3 .has-error').removeClass('has-error');
-        $('#wizard-frame-3 label.text-danger').removeClass('text-danger');
-
-        try {
-            // Validate required fields.
-            var missingRequiredField = false;
-            $('.required').each(function (index, requiredField) {
-                if (!$(requiredField).val()) {
-                    $(requiredField).parents('.form-group').addClass('has-error');
-                    missingRequiredField = true;
-                }
-            });
-            if (missingRequiredField) {
-                throw new Error(EALang.fields_are_required);
-            }
-
-            var $acceptToTermsAndConditions = $('#accept-to-terms-and-conditions');
-            if ($acceptToTermsAndConditions.length && !$acceptToTermsAndConditions.prop('checked')) {
-                $acceptToTermsAndConditions.parents('.form-check').addClass('text-danger');
-                throw new Error(EALang.fields_are_required);
-            }
-
-            var $acceptToPrivacyPolicy = $('#accept-to-privacy-policy');
-            if ($acceptToPrivacyPolicy.length && !$acceptToPrivacyPolicy.prop('checked')) {
-                $acceptToPrivacyPolicy.parents('.form-check').addClass('text-danger');
-                throw new Error(EALang.fields_are_required);
-            }
-
-
-            // Validate email address.
-            if (!GeneralFunctions.validateEmail($('#email').val())) {
-                $('#email').parents('.form-group').addClass('has-error');
-                throw new Error(EALang.invalid_email);
-            }
-
-            return true;
-        } catch (error) {
-            $('#form-message').text(error.message);
-            return false;
-        }
+        const form = document.getElementById('book-appointment-form');
+        const valid = form.checkValidity();
+        form.classList.add('was-validated');
+        return valid;
     }
 
     /**
@@ -499,137 +459,39 @@ window.FrontendBook = window.FrontendBook || {};
      * customer settings and input for the appointment booking.
      */
     exports.updateConfirmFrame = function () {
-        if ($('.selected-hour').text() === '') {
+        const fd = new FormData(document.getElementById('book-appointment-form'));
+        const selectedHour = fd.get('hour');
+        const timezone = FrontendBookApi.getCustomerTimezone();
+        const selectedDate = fd.get('date');
+        const provider = fd.get('provider');
+        if (selectedHour==='' || selectedHour===null || selectedDate==='') {
             return;
         }
 
-        // Appointment Details
-        var selectedDate = $('#select-date').datepicker('getDate');
-
-        if (selectedDate !== null) {
-            selectedDate = GeneralFunctions.formatDate(selectedDate, GlobalVariables.dateFormat);
-        }
-
-        var serviceId = $('#select-service').val();
-        var servicePrice = '';
-        var serviceCurrency = '';
-
-        GlobalVariables.availableServices.forEach(function (service, index) {
-            if (Number(service.id) === Number(serviceId) && Number(service.price) > 0) {
-                servicePrice = service.price;
-                serviceCurrency = service.currency;
-                return false; // break loop
-            }
-        });
-
-        $('#appointment-details').empty();
-
-        $('<div/>', {
-            'html': [
-                $('<h4/>', {
-                    'text': EALang.appointment
-                }),
-                $('<p/>', {
-                    'html': [
-                        $('<span/>', {
-                            'text': EALang.service + ': ' + $('#select-service option:selected').text()
-                        }),
-                        $('<br/>'),
-                        $('<span/>', {
-                            'text': EALang.provider + ': ' + $('#select-provider option:selected').text()
-                        }),
-                        $('<br/>'),
-                        $('<span/>', {
-                            'text': EALang.start + ': ' + selectedDate + ' ' + $('.selected-hour').text()
-                        }),
-                        $('<br/>'),
-                        $('<span/>', {
-                            'text': EALang.timezone + ': ' + $('#select-timezone option:selected').text()
-                        }),
-                        $('<br/>'),
-                        $('<span/>', {
-                            'text': EALang.price + ': ' + servicePrice + ' ' + serviceCurrency,
-                            'prop': {
-                                'hidden': !servicePrice
-                            }
-                        }),
-                    ]
-                })
-            ]
-        })
-            .appendTo('#appointment-details');
-
-        // Customer Details
-        var firstName = GeneralFunctions.escapeHtml($('#first-name').val());
-        var lastName = GeneralFunctions.escapeHtml($('#last-name').val());
-        var phoneNumber = GeneralFunctions.escapeHtml($('#phone-number').val());
-        var email = GeneralFunctions.escapeHtml($('#email').val());
-        var address = GeneralFunctions.escapeHtml($('#address').val());
-        var city = GeneralFunctions.escapeHtml($('#city').val());
-        var zipCode = GeneralFunctions.escapeHtml($('#zip-code').val());
-
-        $('#customer-details').empty();
-
-        $('<div/>', {
-            'html': [
-                $('<h4/>)', {
-                    'text': EALang.customer
-                }),
-                $('<p/>', {
-                    'html': [
-                        $('<span/>', {
-                            'text': EALang.customer + ': ' + firstName + ' ' + lastName
-                        }),
-                        $('<br/>'),
-                        $('<span/>', {
-                            'text': EALang.phone_number + ': ' + phoneNumber
-                        }),
-                        $('<br/>'),
-                        $('<span/>', {
-                            'text': EALang.email + ': ' + email
-                        }),
-                        $('<br/>'),
-                        $('<span/>', {
-                            'text': address ? EALang.address + ': ' + address : ''
-                        }),
-                        $('<br/>'),
-                        $('<span/>', {
-                            'text': city ? EALang.city + ': ' + city : ''
-                        }),
-                        $('<br/>'),
-                        $('<span/>', {
-                            'text': zipCode ? EALang.zip_code + ': ' + zipCode : ''
-                        }),
-                        $('<br/>'),
-                    ]
-                })
-            ]
-        })
-            .appendTo('#customer-details');
-
+        const serviceId = $('#select-service').val();
 
         // Update appointment form data for submission to server when the user confirms the appointment.
         var data = {};
 
         data.customer = {
-            last_name: $('#last-name').val(),
-            first_name: $('#first-name').val(),
-            email: $('#email').val(),
-            phone_number: $('#phone-number').val(),
-            address: $('#address').val(),
-            city: $('#city').val(),
-            zip_code: $('#zip-code').val(),
-            timezone: $('#select-timezone').val()
+            last_name: '',
+            first_name: fd.get('name'),
+            email: fd.get('email'),
+            timezone: fd.get('timezone'),
+            phone_number: '',
+            address: '',
+            city: '',
+            zip_code: ''
         };
 
+        const startDatetime = `${selectedDate} ${selectedHour}:00`;
         data.appointment = {
-            start_datetime: $('#select-date').datepicker('getDate').toString('yyyy-MM-dd')
-                + ' ' + Date.parse($('.selected-hour').data('value') || '').toString('HH:mm') + ':00',
-            end_datetime: calculateEndDatetime(),
-            notes: $('#notes').val(),
+            start_datetime: startDatetime,
+            end_datetime: calculateEndDatetime(startDatetime),
+            notes: fd.get('notes'),
             is_unavailable: false,
-            id_users_provider: $('#select-provider').val(),
-            id_services: $('#select-service').val()
+            id_users_provider: provider,
+            id_services: fd.get('service')
         };
 
         data.manage_mode = FrontendBook.manageMode;
@@ -638,8 +500,7 @@ window.FrontendBook = window.FrontendBook || {};
             data.appointment.id = GlobalVariables.appointmentData.id;
             data.customer.id = GlobalVariables.customerData.id;
         }
-        $('input[name="csrfToken"]').val(GlobalVariables.csrfToken);
-        $('input[name="post_data"]').val(JSON.stringify(data));
+        return data;
     };
 
     /**
@@ -648,7 +509,7 @@ window.FrontendBook = window.FrontendBook || {};
      *
      * @return {String} Returns the end datetime in string format.
      */
-    function calculateEndDatetime() {
+    function calculateEndDatetime(startDatetime) {
         // Find selected service duration.
         var serviceId = $('#select-service').val();
 
@@ -657,19 +518,11 @@ window.FrontendBook = window.FrontendBook || {};
         });
 
         // Add the duration to the start datetime.
-        var startDatetime = $('#select-date').datepicker('getDate').toString('dd-MM-yyyy')
-            + ' ' + Date.parse($('.selected-hour').data('value') || '').toString('HH:mm');
-        startDatetime = Date.parseExact(startDatetime, 'dd-MM-yyyy HH:mm');
-        var endDatetime;
+        var endDatetime = moment(startDatetime,'YYYY-MM-DD HH:mm:ss').add(parseFloat(service.duration),'minutes');
 
-        if (service.duration && startDatetime) {
-            endDatetime = startDatetime.add({'minutes': parseInt(service.duration)});
-        } else {
-            endDatetime = new Date();
-        }
-
-        return endDatetime.toString('yyyy-MM-dd HH:mm:ss');
+        return endDatetime.format('YYYY-MM-DD HH:mm:ss');
     }
+    exports.calculateEndDatetime = calculateEndDatetime;
 
     /**
      * This method applies the appointment's data to the wizard so
@@ -694,7 +547,7 @@ window.FrontendBook = window.FrontendBook || {};
 
             // Apply Customer's Data
             $('#last-name').val(customer.last_name);
-            $('#first-name').val(customer.first_name);
+            $('#name').val(customer.first_name);
             $('#email').val(customer.email);
             $('#phone-number').val(customer.phone_number);
             $('#address').val(customer.address);
@@ -735,46 +588,7 @@ window.FrontendBook = window.FrontendBook || {};
             return;
         }
 
-        $('<strong/>', {
-            'text': service.name
-        })
-            .appendTo($serviceDescription);
-
-        if (service.description) {
-            $('<br/>')
-                .appendTo($serviceDescription);
-
-            $('<span/>', {
-                'text': service.description
-            })
-                .appendTo($serviceDescription);
-        }
-
-        if (service.duration || Number(service.price) > 0 || service.location) {
-            $('<br/>')
-                .appendTo($serviceDescription);
-        }
-
-        if (service.duration) {
-            $('<span/>', {
-                'text': '[' + EALang.duration + ' ' + service.duration + ' ' + EALang.minutes + ']'
-            })
-                .appendTo($serviceDescription);
-        }
-
-        if (Number(service.price) > 0) {
-            $('<span/>', {
-                'text': '[' + EALang.price + ' ' + service.price + ' ' + service.currency + ']'
-            })
-                .appendTo($serviceDescription);
-        }
-
-        if (service.location) {
-            $('<span/>', {
-                'text': '[' + EALang.location + ' ' + service.location + ']'
-            })
-                .appendTo($serviceDescription);
-        }
+        $serviceDescription.html(service.description);
     }
 
 })(window.FrontendBook);

@@ -18,13 +18,17 @@ window.FrontendBookApi = window.FrontendBookApi || {};
  *
  * @module FrontendBookApi
  */
+    var unavailableDatesBackup;
+    var selectedDateStringBackup;
 (function (exports) {
 
     'use strict';
 
-    var unavailableDatesBackup;
-    var selectedDateStringBackup;
     var processingUnavailabilities = false;
+
+    exports.getCustomerTimezone = function() {
+        return Intl.DateTimeFormat().resolvedOptions().timeZone;
+    }
 
     /**
      * Get Available Hours
@@ -87,21 +91,22 @@ window.FrontendBookApi = window.FrontendBookApi || {};
                     }
 
                     var providerTimezone = provider.timezone;
-                    var selectedTimezone = $('#select-timezone').val();
+                    var selectedTimezone = FrontendBookApi.getCustomerTimezone();
                     var timeFormat = GlobalVariables.timeFormat === 'regular' ? 'h:mm a' : 'HH:mm';
 
                     response.forEach(function (availableHour) {
-                        var availableHourMoment = moment
-                            .tz(selectedDate + ' ' + availableHour + ':00', providerTimezone)
-                            .tz(selectedTimezone);
+                        var providerHourMoment = moment.tz(selectedDate + ' ' + availableHour + ':00', providerTimezone);
+                        var availableHourMoment = moment.tz(selectedDate + ' ' + availableHour + ':00', providerTimezone).tz(selectedTimezone);
 
+                        var text = availableHourMoment.format(timeFormat);
+                        var providerText = providerHourMoment.format(timeFormat);
+                        if(text != providerText) {
+                            text += ` (${providerText} for us)`;
+                        }
                         $('#available-hours').append(
-                            $('<button/>', {
-                                'class': 'btn btn-outline-secondary btn-block shadow-none available-hour',
-                                'data': {
-                                    'value': availableHour
-                                },
-                                'text': availableHourMoment.format(timeFormat)
+                            $('<option>', {
+                                'value': availableHour,
+                                'text': text
                             })
                         );
                     });
@@ -135,7 +140,7 @@ window.FrontendBookApi = window.FrontendBookApi || {};
      * This method will make an ajax call to the appointments controller that will register
      * the appointment to the database.
      */
-    exports.registerAppointment = function () {
+    exports.registerAppointment = function (formData) {
         var $captchaText = $('.captcha-text');
 
         if ($captchaText.length > 0) {
@@ -146,12 +151,11 @@ window.FrontendBookApi = window.FrontendBookApi || {};
             }
         }
 
-        var formData = JSON.parse($('input[name="post_data"]').val());
-
         var data = {
             csrfToken: GlobalVariables.csrfToken,
             post_data: formData
         };
+        console.log(data);
 
         if ($captchaText.length > 0) {
             data.captcha = $captchaText.val();
@@ -259,8 +263,18 @@ window.FrontendBookApi = window.FrontendBookApi || {};
     };
 
     exports.applyPreviousUnavailableDates = function () {
+        if(!unavailableDatesBackup || !selectedDateStringBackup) {
+            return;
+        }
         applyUnavailableDates(unavailableDatesBackup, selectedDateStringBackup);
     };
+
+    exports.set_date_field = function() {
+        const date = $('#select-date').datepicker('getDate').toString('yyyy-MM-dd');
+        document.getElementById('date').value = date;
+        FrontendBookApi.getAvailableHours(date);
+    }
+
 
     function applyUnavailableDates(unavailableDates, selectedDateString, setDate) {
         setDate = setDate || false;
@@ -276,6 +290,7 @@ window.FrontendBookApi = window.FrontendBookApi || {};
                 var currentDate = new Date(selectedDate.getFullYear(), selectedDate.getMonth(), i);
                 if (unavailableDates.indexOf(currentDate.toString('yyyy-MM-dd')) === -1) {
                     $('#select-date').datepicker('setDate', currentDate);
+                    FrontendBookApi.set_date_field();
                     FrontendBookApi.getAvailableHours(currentDate.toString('yyyy-MM-dd'));
                     break;
                 }

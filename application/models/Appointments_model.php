@@ -95,7 +95,7 @@ class Appointments_model extends EA_Model {
         if ($diff < EVENT_MINIMUM_DURATION)
         {
             throw new Exception('The appointment duration is less than the minimum duration ('
-                . EVENT_MINIMUM_DURATION . ' minutes).');
+                . EVENT_MINIMUM_DURATION . ' minutes).' . $diff);
         }
 
         // Check if the provider's id is valid.

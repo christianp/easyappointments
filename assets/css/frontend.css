@@ -19,7 +19,7 @@ body {
 }
 
 body {
-    background-color: #f5f8fa;
+    background-color: white;
 }
 
 #main {
@@ -215,6 +215,11 @@ body {
 
 #book-appointment-wizard #wizard-frame-1 select {
     margin-bottom: 25px;
+}
+
+#notes {
+    height: 10em;
+    resize: vertical;
 }
 
 #book-appointment-wizard .captcha-title {
